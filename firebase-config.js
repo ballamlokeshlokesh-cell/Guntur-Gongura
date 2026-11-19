@@ -1,18 +1,17 @@
 /* ========================================================
    GOOGLE FIREBASE CONFIGURATION
-   --------------------------------------------------------
-   Instructions:
-   1. Go to https://console.firebase.google.com
-   2. Open your project -> Project Settings (gear icon)
-   3. Scroll to "Your apps" -> Web app (</>)
-   4. Replace the values below with your Firebase credentials
+   Project: staff-id-e2b1b
    ======================================================== */
 
 const FIREBASE_CONFIG = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "guntur-gongura.firebaseapp.com",
-  projectId: "guntur-gongura",
-  storageBucket: "guntur-gongura.appspot.com",
-  messagingSenderId: "123456789012",
-  appId: "1:123456789012:web:abcdef123456789"
+  apiKey: "AIzaSyBt58UAh6M6FhJIcx6TcmiLSPoIbOKfpFI",
+  authDomain: "staff-id-e2b1b.firebaseapp.com",
+  projectId: "staff-id-e2b1b",
+  storageBucket: "staff-id-e2b1b.firebasestorage.app",
+  messagingSenderId: "1069440018416",
+  appId: "1:1069440018416:web:6a4043b944128180ef9f35",
+  measurementId: "G-0R0L8QW6ZV"
 };
+
+// Also alias as firebaseConfig for compatibility
+const firebaseConfig = FIREBASE_CONFIG;

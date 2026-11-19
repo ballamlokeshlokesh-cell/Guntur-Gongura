@@ -79,6 +79,8 @@ function initFirebase() {
     let cfg = null;
     if(typeof FIREBASE_CONFIG !== 'undefined' && FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.apiKey !== 'YOUR_API_KEY') {
       cfg = FIREBASE_CONFIG;
+    } else if(typeof firebaseConfig !== 'undefined' && firebaseConfig.apiKey && firebaseConfig.apiKey !== 'YOUR_API_KEY') {
+      cfg = firebaseConfig;
     } else {
       const stored = localStorage.getItem(FB_CONFIG_KEY);
       if(stored) cfg = JSON.parse(stored);
@@ -371,7 +373,7 @@ async function doLogin(){
 /* ---------- staff database & Firebase settings view ---------- */
 function staffDatabaseView(){
   const db = getStaffDB();
-  const storedConfig = localStorage.getItem(FB_CONFIG_KEY) || '';
+  const storedConfig = localStorage.getItem(FB_CONFIG_KEY) || (typeof FIREBASE_CONFIG !== 'undefined' && FIREBASE_CONFIG.apiKey !== 'YOUR_API_KEY' ? JSON.stringify(FIREBASE_CONFIG, null, 2) : '');
   return `<div class="space-y-6">
     <div class="flex items-center justify-between flex-wrap gap-3">
       <div>
