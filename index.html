@@ -8,6 +8,9 @@
 <script>
 tailwind.config={theme:{extend:{colors:{gold:'#D4AF37',charcoal:'#1a1a2e',deepbg:'#16213e',accent:'#0f3460',card:'#1a1a2e',surface:'#222244'}}}};
 </script>
+<!-- Firebase SDKs (Web CDN) -->
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Inter:wght@300;400;500;600;700&display=swap');
 :root{color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
@@ -33,8 +36,8 @@ h1,h2,h3{font-family:'Playfair Display',Georgia,serif}
 .toast{position:fixed;top:calc(20px + env(safe-area-inset-top,0px));right:20px;z-index:9999;padding:16px 24px;border-radius:12px;color:#fff;font-weight:500;animation:slideIn .4s ease;max-width:360px;background:#22c55e}
 @keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
 .tab.on{background:rgba(212,175,55,0.15);color:#D4AF37}
-input,select{background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:12px 14px;color:#fff;outline:none;width:100%}
-input:focus,select:focus{border-color:#D4AF37}
+input,select,textarea{background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:12px 14px;color:#fff;outline:none;width:100%}
+input:focus,select:focus,textarea:focus{border-color:#D4AF37}
 .cell{aspect-ratio:1;font-size:36px;font-weight:700}
 .flash{animation:fl 1s infinite}@keyframes fl{50%{opacity:.45}}
 .svc{position:fixed;right:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:50}
@@ -57,33 +60,76 @@ const MENU=[
 {id:9,n:'Guntur Chicken Biryani',d:'Dum biryani with raita',p:300,v:0,e:'🍛'}];
 
 /* ========================================================
-   STAFF DATABASE MODULE (SQLite & LocalStorage Sync)
-   Stores Staff ID, Password, Name, and Role in database
+   FIREBASE CLOUD FIRESTORE & LOCAL DATABASE MODULE
    ======================================================== */
 const STAFF_DB_KEY = 'guntur_gongura_staff_db';
+const FB_CONFIG_KEY = 'guntur_gongura_fb_config';
 const INITIAL_STAFF_DB = [
   { id: 'staff', password: 'password123', name: 'Standard Staff', role: 'Staff', createdAt: '2026-01-01' },
   { id: 'admin', password: 'admin123', name: 'Restaurant Admin', role: 'Manager', createdAt: '2026-01-01' }
 ];
 
-let isServerDBAvailable = false;
+let fbDb = null;
+let isFirebaseConnected = false;
 
-// Check if running on backend server (Node.js + SQLite)
-async function syncDatabaseWithServer(){
+// Initialize Firebase if configuration is available
+function initFirebase() {
   try {
-    const res = await fetch('/api/staff');
-    if(res.ok){
-      const data = await res.json();
-      if(data.ok && Array.isArray(data.staff)){
-        isServerDBAvailable = true;
-        saveStaffDB(data.staff);
-        return;
+    let cfg = null;
+    const stored = localStorage.getItem(FB_CONFIG_KEY);
+    if(stored) cfg = JSON.parse(stored);
+    
+    if(cfg && cfg.apiKey && cfg.projectId) {
+      if(!firebase.apps.length) {
+        firebase.initializeApp(cfg);
       }
+      fbDb = firebase.firestore();
+      isFirebaseConnected = true;
+      setupFirebaseListeners();
+      console.log('✅ Firebase Cloud Firestore connected!');
+      return true;
     }
-  } catch(e){}
-  isServerDBAvailable = false;
+  } catch(e) {
+    console.warn('Firebase init error:', e);
+  }
+  isFirebaseConnected = false;
+  return false;
 }
-syncDatabaseWithServer();
+
+function setupFirebaseListeners() {
+  if(!fbDb) return;
+  // Sync staff collection from Firebase in real-time
+  fbDb.collection('staff').onSnapshot(snap => {
+    if(!snap.empty) {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      saveStaffDB(list);
+    } else {
+      // Seed default staff into Firebase
+      INITIAL_STAFF_DB.forEach(u => {
+        fbDb.collection('staff').doc(u.id).set({ password: u.password, name: u.name, role: u.role, createdAt: u.createdAt });
+      });
+    }
+    draw();
+  }, err => console.warn('Firestore staff listener:', err));
+
+  // Sync orders from Firebase
+  fbDb.collection('orders').onSnapshot(snap => {
+    if(!snap.empty) {
+      S.orders = snap.docs.map(d => ({ id: +d.id, ...d.data() })).sort((a,b) => b.t - a.t);
+      draw();
+    }
+  }, err => console.warn('Firestore orders listener:', err));
+
+  // Sync calls from Firebase
+  fbDb.collection('calls').onSnapshot(snap => {
+    if(!snap.empty) {
+      S.calls = snap.docs.map(d => ({ id: +d.id, ...d.data() })).sort((a,b) => b.t - a.t);
+      draw();
+    }
+  }, err => console.warn('Firestore calls listener:', err));
+}
+
+initFirebase();
 
 function getStaffDB(){
   try {
@@ -110,21 +156,6 @@ async function addStaffMember(id, password, name, role){
     return { ok: false, msg: 'Staff ID "' + id + '" already exists in database!' };
   }
 
-  if(isServerDBAvailable){
-    try {
-      const res = await fetch('/api/staff', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: id.trim(), password: password.trim(), name: name.trim() || id.trim(), role: role || 'Staff' })
-      });
-      const data = await res.json();
-      if(!data.ok) return { ok: false, msg: data.error || 'Server error' };
-      await syncDatabaseWithServer();
-      return { ok: true };
-    } catch(e){}
-  }
-
-  // Fallback to local storage
   const newStaff = {
     id: id.trim(),
     password: password.trim(),
@@ -132,28 +163,39 @@ async function addStaffMember(id, password, name, role){
     role: role || 'Staff',
     createdAt: new Date().toISOString().split('T')[0]
   };
+
+  if(isFirebaseConnected && fbDb){
+    try {
+      await fbDb.collection('staff').doc(cleanId).set({
+        password: newStaff.password,
+        name: newStaff.name,
+        role: newStaff.role,
+        createdAt: newStaff.createdAt
+      });
+      return { ok: true, staff: newStaff };
+    } catch(err){
+      return { ok: false, msg: 'Firebase error: ' + err.message };
+    }
+  }
+
   db.push(newStaff);
   saveStaffDB(db);
   return { ok: true, staff: newStaff };
 }
 
 async function updateStaffPassword(id, newPassword){
-  if(isServerDBAvailable){
+  const cleanId = id.trim().toLowerCase();
+  if(isFirebaseConnected && fbDb){
     try {
-      const res = await fetch('/api/staff/' + encodeURIComponent(id), {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: newPassword.trim() })
-      });
-      const data = await res.json();
-      if(!data.ok) return { ok: false, msg: data.error };
-      await syncDatabaseWithServer();
+      await fbDb.collection('staff').doc(cleanId).update({ password: newPassword.trim() });
       return { ok: true };
-    } catch(e){}
+    } catch(err){
+      return { ok: false, msg: 'Firebase error: ' + err.message };
+    }
   }
 
   const db = getStaffDB();
-  const target = db.find(u => u.id.toLowerCase() === id.toLowerCase());
+  const target = db.find(u => u.id.toLowerCase() === cleanId);
   if(!target) return { ok: false, msg: 'Staff ID not found' };
   target.password = newPassword.trim();
   saveStaffDB(db);
@@ -161,30 +203,29 @@ async function updateStaffPassword(id, newPassword){
 }
 
 async function deleteStaffMember(id){
+  const cleanId = id.trim().toLowerCase();
   let db = getStaffDB();
   if(db.length <= 1) return { ok: false, msg: 'Cannot delete the only remaining staff account!' };
-  if(me && me.id.toLowerCase() === id.toLowerCase()){
+  if(me && me.id.toLowerCase() === cleanId){
     return { ok: false, msg: 'You cannot delete your own logged-in account!' };
   }
 
-  if(isServerDBAvailable){
+  if(isFirebaseConnected && fbDb){
     try {
-      const res = await fetch('/api/staff/' + encodeURIComponent(id), { method: 'DELETE' });
-      const data = await res.json();
-      if(!data.ok) return { ok: false, msg: data.error };
-      await syncDatabaseWithServer();
+      await fbDb.collection('staff').doc(cleanId).delete();
       return { ok: true };
-    } catch(e){}
+    } catch(err){
+      return { ok: false, msg: 'Firebase error: ' + err.message };
+    }
   }
 
-  db = db.filter(u => u.id.toLowerCase() !== id.toLowerCase());
+  db = db.filter(u => u.id.toLowerCase() !== cleanId);
   saveStaffDB(db);
   return { ok: true };
 }
 
 const WIFI={ssid:'GunturGongura_Guest',pw:'Gongura@2026'};
-/* ===== HOTEL DEFAULTS ===== */
-const HOTEL={logo:'🌿',name:'Guntur Gongura',tagline:'Authentic Andhra flavours, served with a smile',about:'A family-run Andhra kitchen in Guntur, known for gongura dishes and Guntur chilli heat. Scan the QR code on your table to order without waiting.',hours:'Daily 11:00 AM – 11:00 PM',address:'Guntur, Andhra Pradesh',phone:'+91 00000 00000',highlights:[['🌶️','Guntur Spice','Fiery chilli heat in every plate'],['🥬','Gongura Specials','Tangy sorrel-leaf curries'],['📱','Staff Portal','Database authentication & real-time kitchen tracking']]};
+const HOTEL={logo:'🌿',name:'Guntur Gongura',tagline:'Authentic Andhra flavours, served with a smile',about:'A family-run Andhra kitchen in Guntur, known for gongura dishes and Guntur chilli heat. Scan the QR code on your table to order without waiting.',hours:'Daily 11:00 AM – 11:00 PM',address:'Guntur, Andhra Pradesh',phone:'+91 00000 00000',highlights:[['🌶️','Guntur Spice','Fiery chilli heat in every plate'],['🥬','Gongura Specials','Tangy sorrel-leaf curries'],['☁️','Cloud Database','Real-time orders & multi-staff authentication']]};
 const $=s=>document.querySelector(s);
 let S={v:0,orders:[],calls:[],ttt:{b:Array(9).fill(''),n:'X',X:null,O:null,w:''}};
 let me=null,cart={},tab='menu',filter='all',staffTab='orders',home=!/^#table/.test(location.hash);
@@ -195,7 +236,7 @@ function checkTableHash(){
 }
 checkTableHash();
 
-/* ---------- sync: room + same-browser tabs ---------- */
+/* ---------- sync: room + same-browser tabs + Firebase ---------- */
 let room=null;const bc=('BroadcastChannel' in window)?new BroadcastChannel('gg-sync'):null;
 function send(t,d){try{bc&&bc.postMessage({t,d})}catch(e){}try{room&&room.emit(t,d)}catch(e){}}
 function recv(t,d){
@@ -278,7 +319,7 @@ function login(){
     <div class="p-3 rounded-xl bg-white/5 border border-white/10 text-xs text-gray-400">
       <div class="flex items-center justify-between mb-1">
         <span class="font-semibold text-gray-300">🗄️ Database Accounts (${db.length}):</span>
-        <span class="text-[11px] ${isServerDBAvailable?'text-emerald-400':'text-blue-400'}">${isServerDBAvailable?'● SQLite Server':'● Persistent Storage'}</span>
+        <span class="text-[11px] ${isFirebaseConnected?'text-emerald-400 font-bold':'text-blue-400'}">${isFirebaseConnected?'● Firebase Cloud Live':'● Persistent Storage'}</span>
       </div>
       <div class="space-y-1 text-center">
         ${db.map(u => `<span class="inline-block bg-black/40 px-2 py-0.5 rounded m-0.5 font-mono text-gold">${u.id} : ${u.password}</span>`).join('')}
@@ -292,26 +333,18 @@ async function doLogin(){
   if(!id)return toast('Please enter Staff ID','#ef4444');
   if(!pw)return toast('Please enter Password','#ef4444');
 
-  if(isServerDBAvailable){
+  if(isFirebaseConnected && fbDb){
     try {
-      const res = await fetch('/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, password: pw })
-      });
-      const data = await res.json();
-      if(data.ok && data.staff){
+      const doc = await fbDb.collection('staff').doc(id.toLowerCase()).get();
+      if(doc.exists && doc.data().password === pw){
         beep(0);
-        me={role:'staff', id: data.staff.id, name: data.staff.name, title: data.staff.role};
+        me={role:'staff', id: doc.id, name: doc.data().name || doc.id, title: doc.data().role || 'Staff'};
         staffTab='orders';
-        toast('Welcome, '+data.staff.name+'!');
+        toast('Welcome, '+me.name+'!');
         draw();
         return;
-      } else {
-        beep(2);
-        return toast(data.error || 'Invalid Staff ID or Password','#ef4444');
       }
-    } catch(e){}
+    } catch(err){}
   }
 
   // Fallback to local DB
@@ -330,21 +363,40 @@ async function doLogin(){
   }
 }
 
-/* ---------- staff database management view ---------- */
+/* ---------- staff database & Firebase settings view ---------- */
 function staffDatabaseView(){
   const db = getStaffDB();
+  const storedConfig = localStorage.getItem(FB_CONFIG_KEY) || '';
   return `<div class="space-y-6">
     <div class="flex items-center justify-between flex-wrap gap-3">
       <div>
-        <h2 class="text-3xl font-bold">Staff Database</h2>
-        <p class="text-sm text-gray-400">Manage all staff credentials stored persistently in the database</p>
+        <h2 class="text-3xl font-bold">Staff & Cloud Database</h2>
+        <p class="text-sm text-gray-400">Manage credentials stored in Firebase Cloud Firestore & local storage</p>
       </div>
       <button class="btn-outline text-xs" onclick="resetStaffDB()">Reset Database to Defaults</button>
     </div>
 
+    <!-- Firebase Cloud Configuration Card -->
+    <div class="glass-gold rounded-2xl p-5 border border-gold/30">
+      <div class="flex items-center justify-between flex-wrap gap-2 mb-2">
+        <h3 class="text-lg font-bold text-gold">☁️ Google Firebase Cloud Database</h3>
+        <span class="text-xs px-3 py-1 rounded-full font-semibold ${isFirebaseConnected?'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30':'bg-amber-500/20 text-amber-300 border border-amber-500/30'}">
+          ${isFirebaseConnected?'● Connected to Cloud Firestore':'● Using Local Storage (Not Connected to Cloud)'}
+        </span>
+      </div>
+      <p class="text-xs text-gray-300 mb-3">Paste your <b>firebaseConfig</b> JSON or credentials from Firebase Console below to connect to Google Cloud Firestore:</p>
+      <div class="space-y-2">
+        <textarea id="fb_json" rows="3" class="text-xs font-mono" placeholder='{"apiKey": "AIzaSy...", "authDomain": "....firebaseapp.com", "projectId": "...", ...}'>${storedConfig}</textarea>
+        <div class="flex gap-2 justify-end">
+          ${isFirebaseConnected ? `<button class="btn-outline text-xs" style="padding:6px 14px" onclick="disconnectFirebase()">Disconnect Cloud</button>` : ''}
+          <button class="btn-gold text-xs" style="padding:6px 18px" onclick="saveFirebaseConfig()">Save & Connect Cloud</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Add Staff Card -->
-    <div class="glass-gold rounded-2xl p-5">
-      <h3 class="text-lg font-bold text-gold mb-3">➕ Add New Staff Account to Database</h3>
+    <div class="glass rounded-2xl p-5">
+      <h3 class="text-lg font-bold text-gold mb-3">➕ Add New Staff Account</h3>
       <div class="grid gap-3 sm:grid-cols-4">
         <div>
           <label class="block text-xs text-gray-400 mb-1">Staff ID</label>
@@ -377,8 +429,8 @@ function staffDatabaseView(){
     <div class="glass rounded-2xl p-5">
       <div class="flex justify-between items-center mb-4">
         <h3 class="text-xl font-bold">Stored Staff Records (${db.length})</h3>
-        <span class="text-xs ${isServerDBAvailable?'text-emerald-400 bg-emerald-500/10 border-emerald-500/20':'text-blue-400 bg-blue-500/10 border-blue-500/20'} px-3 py-1 rounded-full border">
-          ${isServerDBAvailable?'● SQLite Database (staff.db) Active':'● Browser Persistent Storage Active'}
+        <span class="text-xs ${isFirebaseConnected?'text-emerald-400 bg-emerald-500/10 border-emerald-500/20':'text-blue-400 bg-blue-500/10 border-blue-500/20'} px-3 py-1 rounded-full border">
+          ${isFirebaseConnected?'● Firebase Firestore Cloud Synced':'● Local Persistent Storage Active'}
         </span>
       </div>
       <div class="overflow-x-auto">
@@ -413,6 +465,38 @@ function staffDatabaseView(){
       </div>
     </div>
   </div>`}
+
+function saveFirebaseConfig(){
+  const raw = ($('#fb_json')?.value||'').trim();
+  if(!raw) return toast('Please paste Firebase configuration JSON', '#ef4444');
+  try {
+    let cfg = null;
+    if(raw.startsWith('{') && raw.endsWith('}')) {
+      cfg = JSON.parse(raw);
+    } else {
+      // Handle "const firebaseConfig = { ... };" format
+      const match = raw.match(/\{[\s\S]*\}/);
+      if(match) cfg = JSON.parse(match[0].replace(/(['"])?([a-zA-Z0-9_]+)(['"])?:/g, '"$2":').replace(/'/g, '"'));
+    }
+    if(!cfg || !cfg.apiKey || !cfg.projectId) {
+      throw new Error('Config missing apiKey or projectId');
+    }
+    localStorage.setItem(FB_CONFIG_KEY, JSON.stringify(cfg));
+    initFirebase();
+    toast('Firebase connected successfully!');
+    draw();
+  } catch(e) {
+    toast('Invalid Firebase JSON format: ' + e.message, '#ef4444');
+  }
+}
+
+function disconnectFirebase(){
+  localStorage.removeItem(FB_CONFIG_KEY);
+  isFirebaseConnected = false;
+  fbDb = null;
+  toast('Disconnected Firebase. Using local database.');
+  draw();
+}
 
 async function handleAddNewStaff(){
   const id = ($('#new_id')?.value||'').trim();
@@ -482,11 +566,38 @@ function customer(){
 function svcBtn(){const open=S.calls.some(c=>c.table===me.table&&!c.done);return `<button class="btn-gold svc ${open?'':'pulse'}" onclick="callStaff()">${open?'✋ Staff called…':'🔔 Call Staff'}</button>`}
 function add(id){cart[id]=(cart[id]||0)+1;head();toast('Added')}
 function chg(id,d){cart[id]+=d;if(cart[id]<=0)delete cart[id];draw()}
-function placeOrder(tot){
+async function placeOrder(tot){
   const items=Object.keys(cart).map(id=>({n:MENU.find(m=>m.id==id).n,q:cart[id]}));
   const id=(S.orders.reduce((m,o)=>Math.max(m,o.id),0))+1;
-  S.orders.unshift({id,table:me.table,by:me.name,items,total:tot,s:'new',t:Date.now()});cart={};tab='games';commit();toast('Sent to reception!')}
-function callStaff(){if(S.calls.some(c=>c.table===me.table&&!c.done))return;S.calls.unshift({id:Date.now(),table:me.table,t:Date.now(),done:false});commit();toast('Staff is on the way')}
+  const newOrder = {id,table:me.table,by:me.name,items,total:tot,s:'new',t:Date.now()};
+  
+  if(isFirebaseConnected && fbDb){
+    try {
+      await fbDb.collection('orders').doc(String(id)).set(newOrder);
+    } catch(e){}
+  }
+
+  S.orders.unshift(newOrder);
+  cart={};
+  tab='games';
+  commit();
+  toast('Sent to reception!');
+}
+
+async function callStaff(){
+  if(S.calls.some(c=>c.table===me.table&&!c.done))return;
+  const newCall = {id:Date.now(),table:me.table,t:Date.now(),done:false};
+
+  if(isFirebaseConnected && fbDb){
+    try {
+      await fbDb.collection('calls').doc(String(newCall.id)).set(newCall);
+    } catch(e){}
+  }
+
+  S.calls.unshift(newCall);
+  commit();
+  toast('Staff is on the way');
+}
 
 /* ---------- Wi-Fi & games ---------- */
 function games(){
@@ -512,8 +623,26 @@ function reception(){
   <h3 class="text-xl text-gold mb-2">🔔 Service requests (${calls.length})</h3><div class="space-y-2 mb-6">${calls.map(c=>`<div class="glass-gold rounded-xl p-3 flex justify-between items-center"><span><b>Table ${c.table}</b> needs help · ${mins(c.t)}</span><button class="btn-success" onclick="callDone(${c.id})">Attended</button></div>`).join('')||'<p class="text-gray-500 text-sm">None</p>'}</div>
   <h3 class="text-xl text-gold mb-2">📥 New orders (${nw.length})</h3><div class="space-y-3 mb-6">${nw.map(o=>`<div class="glass rounded-xl p-4"><div class="flex justify-between"><b>Table ${o.table} · #${o.id}</b><span class="text-gold">${rupee(o.total)}</span></div><p class="text-sm text-gray-400 my-2">${o.items.map(x=>x.n+' × '+x.q).join(', ')}</p><button class="btn-success" onclick="setS(${o.id},'accepted')">Accept & send to kitchen</button></div>`).join('')||'<p class="text-gray-500 text-sm">No new orders</p>'}</div>
   <h3 class="text-xl mb-2">Progress</h3><div class="space-y-2">${rest.map(o=>`<div class="glass rounded-xl p-3 flex justify-between text-sm"><span>Table ${o.table} · #${o.id}</span><span class="status-badge" style="background:#ffffff14">${o.s}</span></div>`).join('')}</div>`}
-function callDone(id){S.calls.find(c=>c.id===id).done=true;commit()}
-function setS(id,s){S.orders.find(o=>o.id===id).s=s;if(s==='accepted')S.orders.find(o=>o.id===id).aAt=Date.now();commit()}
+
+async function callDone(id){
+  const target = S.calls.find(c=>c.id===id);
+  if(target) target.done=true;
+  if(isFirebaseConnected && fbDb){
+    try { await fbDb.collection('calls').doc(String(id)).update({ done: true }); } catch(e){}
+  }
+  commit();
+}
+
+async function setS(id,s){
+  const o = S.orders.find(o=>o.id===id);
+  if(!o) return;
+  o.s=s;
+  if(s==='accepted') o.aAt=Date.now();
+  if(isFirebaseConnected && fbDb){
+    try { await fbDb.collection('orders').doc(String(id)).update({ s, ...(s==='accepted'?{aAt:Date.now()}:{}) }); } catch(e){}
+  }
+  commit();
+}
 
 /* ---------- kitchen display ---------- */
 function chef(){
