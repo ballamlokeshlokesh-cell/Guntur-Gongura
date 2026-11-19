@@ -11,6 +11,7 @@ tailwind.config={theme:{extend:{colors:{gold:'#D4AF37',charcoal:'#1a1a2e',deepbg
 <!-- Firebase SDKs (Web CDN) -->
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+<script src="firebase-config.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Inter:wght@300;400;500;600;700&display=swap');
 :root{color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
@@ -76,10 +77,14 @@ let isFirebaseConnected = false;
 function initFirebase() {
   try {
     let cfg = null;
-    const stored = localStorage.getItem(FB_CONFIG_KEY);
-    if(stored) cfg = JSON.parse(stored);
+    if(typeof FIREBASE_CONFIG !== 'undefined' && FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.apiKey !== 'YOUR_API_KEY') {
+      cfg = FIREBASE_CONFIG;
+    } else {
+      const stored = localStorage.getItem(FB_CONFIG_KEY);
+      if(stored) cfg = JSON.parse(stored);
+    }
     
-    if(cfg && cfg.apiKey && cfg.projectId) {
+    if(cfg && cfg.apiKey && cfg.projectId && cfg.apiKey !== 'YOUR_API_KEY') {
       if(!firebase.apps.length) {
         firebase.initializeApp(cfg);
       }
