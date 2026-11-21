@@ -66,8 +66,8 @@ const MENU=[
 const STAFF_DB_KEY = 'guntur_gongura_staff_db';
 const FB_CONFIG_KEY = 'guntur_gongura_fb_config';
 const INITIAL_STAFF_DB = [
-  { id: 'staff', password: 'password123', name: 'Standard Staff', role: 'Staff', createdAt: '2026-01-01' },
-  { id: 'admin', password: 'admin123', name: 'Restaurant Admin', role: 'Manager', createdAt: '2026-01-01' }
+  { email: 'staff@restaurant.com', password: 'password123', name: 'Standard Staff', role: 'Staff', createdAt: '2026-01-01' },
+  { email: 'admin@restaurant.com', password: 'admin123', name: 'Restaurant Admin', role: 'Manager', createdAt: '2026-01-01' }
 ];
 
 let fbDb = null;
@@ -108,12 +108,16 @@ function setupFirebaseListeners() {
   // Sync staff collection from Firebase in real-time
   fbDb.collection('staff').onSnapshot(snap => {
     if(!snap.empty) {
-      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const list = snap.docs.map(d => {
+        const data = d.data();
+        const email = (data.email || d.id || '').toLowerCase();
+        return { email, id: email, ...data };
+      });
       saveStaffDB(list);
     } else {
       // Seed default staff into Firebase
       INITIAL_STAFF_DB.forEach(u => {
-        fbDb.collection('staff').doc(u.id).set({ password: u.password, name: u.name, role: u.role, createdAt: u.createdAt });
+        fbDb.collection('staff').doc(u.email.toLowerCase()).set({ email: u.email, password: u.password, name: u.name, role: u.role, createdAt: u.createdAt });
       });
     }
     draw();
@@ -143,7 +147,16 @@ function getStaffDB(){
     const raw = localStorage.getItem(STAFF_DB_KEY);
     if(raw){
       const parsed = JSON.parse(raw);
-      if(Array.isArray(parsed) && parsed.length > 0) return parsed;
+      if(Array.isArray(parsed) && parsed.length > 0) {
+        return parsed.map(u => {
+          const email = (u.email || (u.id && u.id.includes('@') ? u.id : (u.id ? u.id + '@restaurant.com' : 'staff@restaurant.com'))).toLowerCase();
+          return {
+            ...u,
+            email,
+            id: email
+          };
+        });
+      }
     }
   } catch(e){}
   saveStaffDB(INITIAL_STAFF_DB);
@@ -156,24 +169,29 @@ function saveStaffDB(list){
   } catch(e){}
 }
 
-async function addStaffMember(id, password, name, role){
-  const cleanId = id.trim().toLowerCase();
+async function addStaffMember(email, password, name, role){
+  const cleanEmail = email.trim().toLowerCase();
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)){
+    return { ok: false, msg: 'Please enter a valid email address!' };
+  }
   const db = getStaffDB();
-  if(db.some(u => u.id.toLowerCase() === cleanId)){
-    return { ok: false, msg: 'Staff ID "' + id + '" already exists in database!' };
+  if(db.some(u => (u.email || u.id || '').toLowerCase() === cleanEmail)){
+    return { ok: false, msg: 'Staff email "' + email + '" already exists in database!' };
   }
 
   const newStaff = {
-    id: id.trim(),
+    email: cleanEmail,
+    id: cleanEmail,
     password: password.trim(),
-    name: name.trim() || id.trim(),
+    name: name.trim() || cleanEmail.split('@')[0],
     role: role || 'Staff',
     createdAt: new Date().toISOString().split('T')[0]
   };
 
   if(isFirebaseConnected && fbDb){
     try {
-      await fbDb.collection('staff').doc(cleanId).set({
+      await fbDb.collection('staff').doc(cleanEmail).set({
+        email: newStaff.email,
         password: newStaff.password,
         name: newStaff.name,
         role: newStaff.role,
@@ -190,11 +208,11 @@ async function addStaffMember(id, password, name, role){
   return { ok: true, staff: newStaff };
 }
 
-async function updateStaffPassword(id, newPassword){
-  const cleanId = id.trim().toLowerCase();
+async function updateStaffPassword(email, newPassword){
+  const cleanEmail = email.trim().toLowerCase();
   if(isFirebaseConnected && fbDb){
     try {
-      await fbDb.collection('staff').doc(cleanId).update({ password: newPassword.trim() });
+      await fbDb.collection('staff').doc(cleanEmail).update({ password: newPassword.trim() });
       return { ok: true };
     } catch(err){
       return { ok: false, msg: 'Firebase error: ' + err.message };
@@ -202,31 +220,31 @@ async function updateStaffPassword(id, newPassword){
   }
 
   const db = getStaffDB();
-  const target = db.find(u => u.id.toLowerCase() === cleanId);
-  if(!target) return { ok: false, msg: 'Staff ID not found' };
+  const target = db.find(u => (u.email || u.id || '').toLowerCase() === cleanEmail);
+  if(!target) return { ok: false, msg: 'Staff account not found' };
   target.password = newPassword.trim();
   saveStaffDB(db);
   return { ok: true };
 }
 
-async function deleteStaffMember(id){
-  const cleanId = id.trim().toLowerCase();
+async function deleteStaffMember(email){
+  const cleanEmail = email.trim().toLowerCase();
   let db = getStaffDB();
   if(db.length <= 1) return { ok: false, msg: 'Cannot delete the only remaining staff account!' };
-  if(me && me.id.toLowerCase() === cleanId){
+  if(me && ((me.email && me.email.toLowerCase() === cleanEmail) || (me.id && me.id.toLowerCase() === cleanEmail))){
     return { ok: false, msg: 'You cannot delete your own logged-in account!' };
   }
 
   if(isFirebaseConnected && fbDb){
     try {
-      await fbDb.collection('staff').doc(cleanId).delete();
+      await fbDb.collection('staff').doc(cleanEmail).delete();
       return { ok: true };
     } catch(err){
       return { ok: false, msg: 'Firebase error: ' + err.message };
     }
   }
 
-  db = db.filter(u => u.id.toLowerCase() !== cleanId);
+  db = db.filter(u => (u.email || u.id || '').toLowerCase() !== cleanEmail);
   saveStaffDB(db);
   return { ok: true };
 }
@@ -265,7 +283,7 @@ function head(){
     h.innerHTML=`<div class='max-w-5xl mx-auto px-4 py-3 flex items-center justify-between'><h1 class='text-2xl text-gold font-bold'>${HOTEL.logo} ${HOTEL.name}</h1><button class='btn-outline text-xs sm:text-sm' onclick="home=!home;draw()">${home?'Staff Login':'Hotel Home'}</button></div>`;
     return;
   }
-  const who=me.role==='customer'?'Table '+me.table:`Staff: ${me.name||me.id}`;
+  const who=me.role==='customer'?'Table '+me.table:`Staff: ${me.name||me.email||me.id}`;
   let nav='';
   if(me.role==='customer'){
     nav=['menu','cart','track','games'].map(t=>`<button class="tab px-3 py-2 rounded-lg ${tab===t?'on':''}" onclick="tab='${t}';draw()">${{menu:'Menu',cart:'Cart ('+Object.values(cart).reduce((a,b)=>a+b,0)+')',track:'My Order',games:'Wi‑Fi & Games'}[t]}</button>`).join('');
@@ -312,11 +330,11 @@ function login(){
     <div class="text-center mb-2">
       <div class="text-4xl mb-2">🔐</div>
       <h2 class="text-2xl font-bold text-gold">Staff Login</h2>
-      <p class="text-sm text-gray-400 mt-1">Authenticate with your Staff ID & Password</p>
+      <p class="text-sm text-gray-400 mt-1">Authenticate with your Email & Password</p>
     </div>
     <div>
-      <label class="block text-xs uppercase tracking-wider text-gray-400 font-semibold mb-1">Staff ID</label>
-      <input id="staff_id" type="text" placeholder="e.g. staff" autocomplete="username"/>
+      <label class="block text-xs uppercase tracking-wider text-gray-400 font-semibold mb-1">Email Address</label>
+      <input id="staff_email" type="email" placeholder="e.g. staff@restaurant.com" autocomplete="username"/>
     </div>
     <div>
       <label class="block text-xs uppercase tracking-wider text-gray-400 font-semibold mb-1">Password</label>
@@ -329,23 +347,23 @@ function login(){
         <span class="text-[11px] ${isFirebaseConnected?'text-emerald-400 font-bold':'text-blue-400'}">${isFirebaseConnected?'● Firebase Cloud Live':'● Persistent Storage'}</span>
       </div>
       <div class="space-y-1 text-center">
-        ${db.map(u => `<span class="inline-block bg-black/40 px-2 py-0.5 rounded m-0.5 font-mono text-gold">${u.id} : ${u.password}</span>`).join('')}
+        ${db.map(u => `<span class="inline-block bg-black/40 px-2 py-0.5 rounded m-0.5 font-mono text-gold">${u.email || u.id} : ${u.password}</span>`).join('')}
       </div>
     </div>
   </div></div>`}
 
 async function doLogin(){
-  const id=($('#staff_id')?.value||'').trim();
+  const email=($('#staff_email')?.value||'').trim().toLowerCase();
   const pw=($('#staff_pw')?.value||'').trim();
-  if(!id)return toast('Please enter Staff ID','#ef4444');
+  if(!email)return toast('Please enter Email Address','#ef4444');
   if(!pw)return toast('Please enter Password','#ef4444');
 
   if(isFirebaseConnected && fbDb){
     try {
-      const doc = await fbDb.collection('staff').doc(id.toLowerCase()).get();
+      const doc = await fbDb.collection('staff').doc(email).get();
       if(doc.exists && doc.data().password === pw){
         beep(0);
-        me={role:'staff', id: doc.id, name: doc.data().name || doc.id, title: doc.data().role || 'Staff'};
+        me={role:'staff', email: doc.data().email || doc.id, id: doc.data().email || doc.id, name: doc.data().name || (doc.data().email || doc.id).split('@')[0], title: doc.data().role || 'Staff'};
         staffTab='orders';
         toast('Welcome, '+me.name+'!');
         draw();
@@ -356,17 +374,17 @@ async function doLogin(){
 
   // Fallback to local DB
   const db = getStaffDB();
-  const staff = db.find(u => u.id.toLowerCase() === id.toLowerCase() && u.password === pw);
+  const staff = db.find(u => (u.email || u.id || '').toLowerCase() === email && u.password === pw);
 
   if(staff){
     beep(0);
-    me={role:'staff', id: staff.id, name: staff.name, title: staff.role};
+    me={role:'staff', email: staff.email || staff.id, id: staff.email || staff.id, name: staff.name, title: staff.role};
     staffTab='orders';
     toast('Welcome, '+staff.name+'!');
     draw();
   } else {
     beep(2);
-    toast('Invalid Staff ID or Password','#ef4444');
+    toast('Invalid Email or Password','#ef4444');
   }
 }
 
@@ -406,8 +424,8 @@ function staffDatabaseView(){
       <h3 class="text-lg font-bold text-gold mb-3">➕ Add New Staff Account</h3>
       <div class="grid gap-3 sm:grid-cols-4">
         <div>
-          <label class="block text-xs text-gray-400 mb-1">Staff ID</label>
-          <input id="new_id" placeholder="e.g. staff2"/>
+          <label class="block text-xs text-gray-400 mb-1">Staff Email</label>
+          <input id="new_email" type="email" placeholder="e.g. staff2@restaurant.com"/>
         </div>
         <div>
           <label class="block text-xs text-gray-400 mb-1">Password</label>
@@ -444,7 +462,7 @@ function staffDatabaseView(){
         <table class="w-full text-left border-collapse text-sm">
           <thead>
             <tr class="border-b border-white/10 text-gray-400 uppercase text-xs">
-              <th class="py-3 px-3">Staff ID</th>
+              <th class="py-3 px-3">Staff Email</th>
               <th class="py-3 px-3">Name</th>
               <th class="py-3 px-3">Role</th>
               <th class="py-3 px-3">Password</th>
@@ -452,21 +470,24 @@ function staffDatabaseView(){
             </tr>
           </thead>
           <tbody class="divide-y divide-white/5">
-            ${db.map(u => `
+            ${db.map(u => {
+              const uEmail = u.email || u.id;
+              const safeKey = uEmail.replace(/[^a-zA-Z0-9]/g, '_');
+              return `
               <tr class="hover:bg-white/5 transition">
-                <td class="py-3 px-3 font-mono font-bold text-gold">${u.id}</td>
+                <td class="py-3 px-3 font-mono font-bold text-gold">${uEmail}</td>
                 <td class="py-3 px-3">${u.name}</td>
                 <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-xs bg-white/10 text-gray-300">${u.role}</span></td>
                 <td class="py-3 px-3 font-mono text-gray-300">
-                  <span id="pw_disp_${u.id}">••••••••</span>
-                  <button class="text-xs text-gold ml-2 underline" onclick="togglePwDisp('${u.id}', '${u.password}')">view</button>
+                  <span id="pw_disp_${safeKey}">••••••••</span>
+                  <button class="text-xs text-gold ml-2 underline" onclick="togglePwDisp('${safeKey}', '${u.password}')">view</button>
                 </td>
                 <td class="py-3 px-3 text-right space-x-2">
-                  <button class="btn-outline text-xs" style="padding:4px 10px" onclick="promptChangePw('${u.id}')">Change Password</button>
-                  <button class="btn-danger" onclick="handleDeleteStaff('${u.id}')">Delete</button>
+                  <button class="btn-outline text-xs" style="padding:4px 10px" onclick="promptChangePw('${uEmail}')">Change Password</button>
+                  <button class="btn-danger" onclick="handleDeleteStaff('${uEmail}')">Delete</button>
                 </td>
               </tr>
-            `).join('')}
+            `}).join('')}
           </tbody>
         </table>
       </div>
@@ -506,46 +527,46 @@ function disconnectFirebase(){
 }
 
 async function handleAddNewStaff(){
-  const id = ($('#new_id')?.value||'').trim();
+  const email = ($('#new_email')?.value||'').trim();
   const pw = ($('#new_pw')?.value||'').trim();
   const name = ($('#new_name')?.value||'').trim();
   const role = $('#new_role')?.value||'Staff';
 
-  if(!id) return toast('Please provide a Staff ID', '#ef4444');
+  if(!email) return toast('Please provide a Staff Email', '#ef4444');
   if(!pw) return toast('Please provide a Password', '#ef4444');
 
-  const res = await addStaffMember(id, pw, name, role);
+  const res = await addStaffMember(email, pw, name, role);
   if(!res.ok){
     return toast(res.msg, '#ef4444');
   }
-  toast('Staff "'+id+'" added to database!');
+  toast('Staff "'+email+'" added to database!');
   draw();
 }
 
-async function promptChangePw(id){
-  const newPw = prompt('Enter new password for Staff ID: ' + id);
+async function promptChangePw(email){
+  const newPw = prompt('Enter new password for Staff: ' + email);
   if(!newPw || !newPw.trim()) return;
-  const res = await updateStaffPassword(id, newPw);
+  const res = await updateStaffPassword(email, newPw);
   if(res.ok){
-    toast('Password updated successfully for ' + id);
+    toast('Password updated successfully for ' + email);
     draw();
   } else {
     toast(res.msg, '#ef4444');
   }
 }
 
-async function handleDeleteStaff(id){
-  if(!confirm('Are you sure you want to delete staff account: ' + id + '?')) return;
-  const res = await deleteStaffMember(id);
+async function handleDeleteStaff(email){
+  if(!confirm('Are you sure you want to delete staff account: ' + email + '?')) return;
+  const res = await deleteStaffMember(email);
   if(!res.ok){
     return toast(res.msg, '#ef4444');
   }
-  toast('Deleted staff "' + id + '" from database');
+  toast('Deleted staff "' + email + '" from database');
   draw();
 }
 
-function togglePwDisp(id, plainPw){
-  const el = $('#pw_disp_' + id);
+function togglePwDisp(safeKey, plainPw){
+  const el = $('#pw_disp_' + safeKey);
   if(!el) return;
   el.textContent = el.textContent === '••••••••' ? plainPw : '••••••••';
 }

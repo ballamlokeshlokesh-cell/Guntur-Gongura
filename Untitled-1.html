@@ -55,8 +55,8 @@ const MENU=[
 {id:8,n:'Gongura Pachadi Meal',d:'Rice, ghee and gongura pickle',p:150,v:1,e:'🍚'},
 {id:9,n:'Guntur Chicken Biryani',d:'Dum biryani with raita',p:300,v:0,e:'🍛'}];
 
-/* ===== STAFF CREDENTIALS: Change Staff ID and Password here ===== */
-const STAFF_ID = 'staff';
+/* ===== STAFF CREDENTIALS: Change Staff Email and Password here ===== */
+const STAFF_EMAIL = 'staff@restaurant.com';
 const STAFF_PASSWORD = 'password123';
 
 const WIFI={ssid:'GunturGongura_Guest',pw:'Gongura@2026'};
@@ -94,7 +94,7 @@ function head(){
     h.innerHTML=`<div class='max-w-5xl mx-auto px-4 py-3 flex items-center justify-between'><h1 class='text-2xl text-gold font-bold'>${HOTEL.logo} ${HOTEL.name}</h1><button class='btn-outline text-xs sm:text-sm' onclick="home=!home;draw()">${home?'Staff Login':'Hotel Home'}</button></div>`;
     return;
   }
-  const who=me.role==='customer'?'Table '+me.table:`Staff (${me.id||'Active'})`;
+  const who=me.role==='customer'?'Table '+me.table:`Staff (${me.name||me.email||me.id||'Active'})`;
   let nav='';
   if(me.role==='customer'){
     nav=['menu','cart','track','games'].map(t=>`<button class="tab px-3 py-2 rounded-lg ${tab===t?'on':''}" onclick="tab='${t}';draw()">${{menu:'Menu',cart:'Cart ('+Object.values(cart).reduce((a,b)=>a+b,0)+')',track:'My Order',games:'Wi‑Fi & Games'}[t]}</button>`).join('');
@@ -133,11 +133,11 @@ function login(){
     <div class="text-center mb-2">
       <div class="text-4xl mb-2">🔐</div>
       <h2 class="text-2xl font-bold text-gold">Staff Login</h2>
-      <p class="text-sm text-gray-400 mt-1">Enter your Staff ID and Password to continue</p>
+      <p class="text-sm text-gray-400 mt-1">Enter your Email and Password to continue</p>
     </div>
     <div>
-      <label class="block text-xs uppercase tracking-wider text-gray-400 font-semibold mb-1">Staff ID</label>
-      <input id="staff_id" type="text" placeholder="e.g. staff" autocomplete="username"/>
+      <label class="block text-xs uppercase tracking-wider text-gray-400 font-semibold mb-1">Email Address</label>
+      <input id="staff_email" type="email" placeholder="e.g. staff@restaurant.com" autocomplete="username"/>
     </div>
     <div>
       <label class="block text-xs uppercase tracking-wider text-gray-400 font-semibold mb-1">Password</label>
@@ -145,25 +145,25 @@ function login(){
     </div>
     <button class="btn-gold w-full py-3 text-base font-semibold mt-2" onclick="doLogin()">Login</button>
     <div class="p-3 rounded-xl bg-white/5 border border-white/10 text-xs text-gray-400 text-center">
-      Default credentials: Staff ID <span class="text-gold font-mono font-bold">${STAFF_ID}</span> &bull; Password <span class="text-gold font-mono font-bold">${STAFF_PASSWORD}</span>
+      Default credentials: Email <span class="text-gold font-mono font-bold">${STAFF_EMAIL}</span> &bull; Password <span class="text-gold font-mono font-bold">${STAFF_PASSWORD}</span>
     </div>
   </div></div>`}
 
 function doLogin(){
-  const id=($('#staff_id')?.value||'').trim();
+  const email=($('#staff_email')?.value||'').trim().toLowerCase();
   const pw=($('#staff_pw')?.value||'').trim();
-  if(!id)return toast('Please enter Staff ID','#ef4444');
+  if(!email)return toast('Please enter Email Address','#ef4444');
   if(!pw)return toast('Please enter Password','#ef4444');
 
-  if(id===STAFF_ID&&pw===STAFF_PASSWORD){
+  if(email===STAFF_EMAIL.toLowerCase()&&pw===STAFF_PASSWORD){
     beep(0);
-    me={role:'staff',id:id};
+    me={role:'staff',email:email,id:email,name:email.split('@')[0]};
     staffTab='orders';
-    toast('Welcome, '+id+'!');
+    toast('Welcome, '+email+'!');
     draw();
   } else {
     beep(2);
-    toast('Invalid Staff ID or Password','#ef4444');
+    toast('Invalid Email or Password','#ef4444');
   }
 }
 

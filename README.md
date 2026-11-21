@@ -4,7 +4,7 @@ A smart restaurant ordering and management web application built with HTML, Tail
 
 ## Features
 - **Customer Table Service:** QR code-based table ordering (`#table1`, `#table2`, etc.) and live service call requests.
-- **Staff Portal & Database:** Authenticate staff with Staff ID and Password.
+- **Staff Portal & Database:** Authenticate staff with Email and Password.
 - **Persistent Staff Database:** Manage staff accounts (Add, View, Change Password, Delete).
 - **Front of House (Reception):** Review incoming orders, attend service requests, and send tickets to the kitchen.
 - **Kitchen Display System (Chef):** Live ticket display by table with cooking status updates.
@@ -15,13 +15,13 @@ A smart restaurant ordering and management web application built with HTML, Tail
 
 ## Live Firebase Integration
 To connect Google Firebase:
-1. Open the app and log in as staff (`staff` / `password123`).
+1. Open the app and log in as staff (`staff@restaurant.com` / `password123`).
 2. Go to the **🗄️ Staff Database** tab.
 3. Under **"☁️ Google Firebase Cloud Database"**, paste your `firebaseConfig` JSON from the Firebase Console.
 4. Click **Save & Connect Cloud**. The app instantly synchronizes all staff, table calls, and food orders in real-time!
 
 ## Default Credentials
-- **Staff ID:** `staff`
+- **Staff Email:** `staff@restaurant.com`
 - **Password:** `password123`
-- **Admin ID:** `admin`
+- **Admin Email:** `admin@restaurant.com`
 - **Password:** `admin123`
