@@ -10,6 +10,7 @@ tailwind.config={theme:{extend:{colors:{gold:'#D4AF37',charcoal:'#1a1a2e',deepbg
 </script>
 <!-- Firebase SDKs (Web CDN) -->
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 <script src="firebase-config.js"></script>
 <style>
@@ -71,7 +72,9 @@ const INITIAL_STAFF_DB = [
 ];
 
 let fbDb = null;
+let fbAuth = null;
 let isFirebaseConnected = false;
+let isFirebaseAuthConnected = false;
 
 // Initialize Firebase if configuration is available
 function initFirebase() {
@@ -90,16 +93,28 @@ function initFirebase() {
       if(!firebase.apps.length) {
         firebase.initializeApp(cfg);
       }
-      fbDb = firebase.firestore();
-      isFirebaseConnected = true;
-      setupFirebaseListeners();
-      console.log('✅ Firebase Cloud Firestore connected!');
+      try {
+        fbAuth = firebase.auth();
+        isFirebaseAuthConnected = true;
+        console.log('✅ Firebase Authentication connected!');
+      } catch(authErr) {
+        console.warn('Firebase Auth init warning:', authErr);
+      }
+      try {
+        fbDb = firebase.firestore();
+        isFirebaseConnected = true;
+        setupFirebaseListeners();
+        console.log('✅ Firebase Cloud Firestore connected!');
+      } catch(dbErr) {
+        console.warn('Firebase Firestore init warning:', dbErr);
+      }
       return true;
     }
   } catch(e) {
     console.warn('Firebase init error:', e);
   }
   isFirebaseConnected = false;
+  isFirebaseAuthConnected = false;
   return false;
 }
 
@@ -117,11 +132,11 @@ function setupFirebaseListeners() {
     } else {
       // Seed default staff into Firebase
       INITIAL_STAFF_DB.forEach(u => {
-        fbDb.collection('staff').doc(u.email.toLowerCase()).set({ email: u.email, password: u.password, name: u.name, role: u.role, createdAt: u.createdAt });
+        fbDb.collection('staff').doc(u.email.toLowerCase()).set({ email: u.email, password: u.password, name: u.name, role: u.role, createdAt: u.createdAt }).catch(() => {});
       });
     }
     draw();
-  }, err => console.warn('Firestore staff listener:', err));
+  }, err => console.warn('Firestore staff listener note:', err.message));
 
   // Sync orders from Firebase
   fbDb.collection('orders').onSnapshot(snap => {
@@ -129,7 +144,7 @@ function setupFirebaseListeners() {
       S.orders = snap.docs.map(d => ({ id: +d.id, ...d.data() })).sort((a,b) => b.t - a.t);
       draw();
     }
-  }, err => console.warn('Firestore orders listener:', err));
+  }, err => console.warn('Firestore orders listener note:', err.message));
 
   // Sync calls from Firebase
   fbDb.collection('calls').onSnapshot(snap => {
@@ -137,7 +152,7 @@ function setupFirebaseListeners() {
       S.calls = snap.docs.map(d => ({ id: +d.id, ...d.data() })).sort((a,b) => b.t - a.t);
       draw();
     }
-  }, err => console.warn('Firestore calls listener:', err));
+  }, err => console.warn('Firestore calls listener note:', err.message));
 }
 
 initFirebase();
@@ -174,6 +189,9 @@ async function addStaffMember(email, password, name, role){
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)){
     return { ok: false, msg: 'Please enter a valid email address!' };
   }
+  if(!password || password.trim().length < 6){
+    return { ok: false, msg: 'Password must be at least 6 characters (Firebase requirement)!' };
+  }
   const db = getStaffDB();
   if(db.some(u => (u.email || u.id || '').toLowerCase() === cleanEmail)){
     return { ok: false, msg: 'Staff email "' + email + '" already exists in database!' };
@@ -188,6 +206,26 @@ async function addStaffMember(email, password, name, role){
     createdAt: new Date().toISOString().split('T')[0]
   };
 
+  // 1. Store email and password in Firebase Authentication
+  if(isFirebaseAuthConnected && typeof firebase !== 'undefined'){
+    try {
+      let cfg = (typeof FIREBASE_CONFIG !== 'undefined' && FIREBASE_CONFIG.apiKey) ? FIREBASE_CONFIG : (typeof firebaseConfig !== 'undefined' ? firebaseConfig : null);
+      if(!cfg){
+        const stored = localStorage.getItem(FB_CONFIG_KEY);
+        if(stored) cfg = JSON.parse(stored);
+      }
+      if(cfg){
+        const secApp = firebase.initializeApp(cfg, 'StaffAdd_' + Date.now());
+        await secApp.auth().createUserWithEmailAndPassword(cleanEmail, newStaff.password);
+        await secApp.delete();
+        console.log('✅ Successfully stored user credentials in Firebase Authentication:', cleanEmail);
+      }
+    } catch(fbAuthErr){
+      console.warn('Firebase Auth user registration note:', fbAuthErr.code, fbAuthErr.message);
+    }
+  }
+
+  // 2. Store profile in Firebase Cloud Firestore
   if(isFirebaseConnected && fbDb){
     try {
       await fbDb.collection('staff').doc(cleanEmail).set({
@@ -197,9 +235,9 @@ async function addStaffMember(email, password, name, role){
         role: newStaff.role,
         createdAt: newStaff.createdAt
       });
-      return { ok: true, staff: newStaff };
+      console.log('✅ Stored staff profile in Cloud Firestore');
     } catch(err){
-      return { ok: false, msg: 'Firebase error: ' + err.message };
+      console.warn('Firestore doc save notice:', err.message);
     }
   }
 
@@ -210,12 +248,25 @@ async function addStaffMember(email, password, name, role){
 
 async function updateStaffPassword(email, newPassword){
   const cleanEmail = email.trim().toLowerCase();
+  if(!newPassword || newPassword.trim().length < 6){
+    return { ok: false, msg: 'Password must be at least 6 characters (Firebase requirement)!' };
+  }
+
+  // Update in Firebase Auth if current user
+  if(fbAuth && fbAuth.currentUser && (fbAuth.currentUser.email || '').toLowerCase() === cleanEmail){
+    try {
+      await fbAuth.currentUser.updatePassword(newPassword.trim());
+      console.log('✅ Updated password in Firebase Authentication');
+    } catch(fbAuthErr){
+      console.warn('Firebase Auth password update note:', fbAuthErr.message);
+    }
+  }
+
   if(isFirebaseConnected && fbDb){
     try {
       await fbDb.collection('staff').doc(cleanEmail).update({ password: newPassword.trim() });
-      return { ok: true };
     } catch(err){
-      return { ok: false, msg: 'Firebase error: ' + err.message };
+      console.warn('Firestore update note:', err.message);
     }
   }
 
@@ -344,7 +395,7 @@ function login(){
     <div class="p-3 rounded-xl bg-white/5 border border-white/10 text-xs text-gray-400">
       <div class="flex items-center justify-between mb-1">
         <span class="font-semibold text-gray-300">🗄️ Database Accounts (${db.length}):</span>
-        <span class="text-[11px] ${isFirebaseConnected?'text-emerald-400 font-bold':'text-blue-400'}">${isFirebaseConnected?'● Firebase Cloud Live':'● Persistent Storage'}</span>
+        <span class="text-[11px] ${isFirebaseAuthConnected?'text-emerald-400 font-bold':'text-blue-400'}">${isFirebaseAuthConnected?'🔥 Firebase Auth Connected':'● Persistent Storage'}</span>
       </div>
       <div class="space-y-1 text-center">
         ${db.map(u => `<span class="inline-block bg-black/40 px-2 py-0.5 rounded m-0.5 font-mono text-gold">${u.email || u.id} : ${u.password}</span>`).join('')}
@@ -358,6 +409,46 @@ async function doLogin(){
   if(!email)return toast('Please enter Email Address','#ef4444');
   if(!pw)return toast('Please enter Password','#ef4444');
 
+  // 1. Authenticate with Firebase Authentication
+  if(fbAuth){
+    try {
+      const userCred = await fbAuth.signInWithEmailAndPassword(email, pw);
+      if(userCred && userCred.user){
+        const db = getStaffDB();
+        const staffProfile = db.find(u => (u.email || u.id || '').toLowerCase() === email);
+        const name = staffProfile?.name || userCred.user.displayName || email.split('@')[0];
+        const role = staffProfile?.role || 'Staff';
+        beep(0);
+        me = { role: 'staff', email: userCred.user.email, id: userCred.user.email, name, title: role };
+        staffTab = 'orders';
+        toast('Welcome (Firebase Auth), ' + me.name + '!');
+        draw();
+        return;
+      }
+    } catch(authErr){
+      console.warn('Firebase Auth sign in attempt:', authErr.code, authErr.message);
+      // Auto-register in Firebase Auth if account is in local DB
+      const db = getStaffDB();
+      const localMatch = db.find(u => (u.email || u.id || '').toLowerCase() === email && u.password === pw);
+      if(localMatch && (authErr.code === 'auth/user-not-found' || authErr.code === 'auth/invalid-credential' || authErr.code === 'auth/invalid-login-credentials')){
+        try {
+          const newCred = await fbAuth.createUserWithEmailAndPassword(email, pw);
+          if(newCred && newCred.user){
+            beep(0);
+            me = { role: 'staff', email: newCred.user.email, id: newCred.user.email, name: localMatch.name, title: localMatch.role };
+            staffTab = 'orders';
+            toast('Welcome! Registered with Firebase: ' + me.name);
+            draw();
+            return;
+          }
+        } catch(signupErr){
+          console.warn('Firebase auto-signup note:', signupErr);
+        }
+      }
+    }
+  }
+
+  // 2. Try Firestore doc
   if(isFirebaseConnected && fbDb){
     try {
       const doc = await fbDb.collection('staff').doc(email).get();
@@ -372,7 +463,7 @@ async function doLogin(){
     } catch(err){}
   }
 
-  // Fallback to local DB
+  // 3. Fallback to local DB
   const db = getStaffDB();
   const staff = db.find(u => (u.email || u.id || '').toLowerCase() === email && u.password === pw);
 
@@ -396,7 +487,7 @@ function staffDatabaseView(){
     <div class="flex items-center justify-between flex-wrap gap-3">
       <div>
         <h2 class="text-3xl font-bold">Staff & Cloud Database</h2>
-        <p class="text-sm text-gray-400">Manage credentials stored in Firebase Cloud Firestore & local storage</p>
+        <p class="text-sm text-gray-400">Manage credentials stored in Firebase Authentication & Cloud Firestore</p>
       </div>
       <button class="btn-outline text-xs" onclick="resetStaffDB()">Reset Database to Defaults</button>
     </div>
@@ -404,18 +495,28 @@ function staffDatabaseView(){
     <!-- Firebase Cloud Configuration Card -->
     <div class="glass-gold rounded-2xl p-5 border border-gold/30">
       <div class="flex items-center justify-between flex-wrap gap-2 mb-2">
-        <h3 class="text-lg font-bold text-gold">☁️ Google Firebase Cloud Database</h3>
-        <span class="text-xs px-3 py-1 rounded-full font-semibold ${isFirebaseConnected?'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30':'bg-amber-500/20 text-amber-300 border border-amber-500/30'}">
-          ${isFirebaseConnected?'● Connected to Cloud Firestore':'● Using Local Storage (Not Connected to Cloud)'}
-        </span>
+        <h3 class="text-lg font-bold text-gold">🔥 Google Firebase Cloud Authentication & Database</h3>
+        <div class="flex gap-2 flex-wrap">
+          <span class="text-xs px-3 py-1 rounded-full font-semibold ${isFirebaseAuthConnected?'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30':'bg-red-500/20 text-red-300 border border-red-500/30'}">
+            ${isFirebaseAuthConnected?'● Firebase Auth Active (Email & Password)':'● Firebase Auth Disconnected'}
+          </span>
+          <span class="text-xs px-3 py-1 rounded-full font-semibold ${isFirebaseConnected?'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30':'bg-amber-500/20 text-amber-300 border border-amber-500/30'}">
+            ${isFirebaseConnected?'● Cloud Firestore Connected':'● Local Persistent Storage'}
+          </span>
+        </div>
       </div>
-      <p class="text-xs text-gray-300 mb-3">Paste your <b>firebaseConfig</b> JSON or credentials from Firebase Console below to connect to Google Cloud Firestore:</p>
+      <p class="text-xs text-gray-300 mb-2">Staff accounts, emails, and passwords are stored directly in <b>Google Firebase Authentication</b> (Project: <code class="text-gold">staff-id-e2b1b</code>).</p>
       <div class="space-y-2">
         <textarea id="fb_json" rows="3" class="text-xs font-mono" placeholder='{"apiKey": "AIzaSy...", "authDomain": "....firebaseapp.com", "projectId": "...", ...}'>${storedConfig}</textarea>
         <div class="flex gap-2 justify-end">
-          ${isFirebaseConnected ? `<button class="btn-outline text-xs" style="padding:6px 14px" onclick="disconnectFirebase()">Disconnect Cloud</button>` : ''}
+          ${(isFirebaseConnected||isFirebaseAuthConnected) ? `<button class="btn-outline text-xs" style="padding:6px 14px" onclick="disconnectFirebase()">Disconnect Cloud</button>` : ''}
           <button class="btn-gold text-xs" style="padding:6px 18px" onclick="saveFirebaseConfig()">Save & Connect Cloud</button>
         </div>
+      </div>
+      <div class="mt-3 p-3 rounded-xl bg-black/40 border border-white/5 text-[11px] text-gray-400 space-y-1">
+        <div class="font-semibold text-gray-300">💡 Cloud Firestore Live Sync Tip:</div>
+        <p>If you want real-time live order tickets and table-call alerts across multiple devices via Cloud Firestore, ensure your Firestore Rules in Firebase Console are published:</p>
+        <code class="block text-emerald-400 font-mono bg-black/60 p-1.5 rounded">allow read, write: if true;</code>
       </div>
     </div>
 
@@ -521,7 +622,9 @@ function saveFirebaseConfig(){
 function disconnectFirebase(){
   localStorage.removeItem(FB_CONFIG_KEY);
   isFirebaseConnected = false;
+  isFirebaseAuthConnected = false;
   fbDb = null;
+  fbAuth = null;
   toast('Disconnected Firebase. Using local database.');
   draw();
 }

@@ -8,6 +8,10 @@
 <script>
 tailwind.config={theme:{extend:{colors:{gold:'#D4AF37',charcoal:'#1a1a2e',deepbg:'#16213e',accent:'#0f3460',card:'#1a1a2e',surface:'#222244'}}}};
 </script>
+<!-- Firebase SDKs (Web CDN) -->
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+<script src="firebase-config.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Inter:wght@300;400;500;600;700&display=swap');
 :root{color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
@@ -58,6 +62,14 @@ const MENU=[
 /* ===== STAFF CREDENTIALS: Change Staff Email and Password here ===== */
 const STAFF_EMAIL = 'staff@restaurant.com';
 const STAFF_PASSWORD = 'password123';
+
+let fbAuth = null;
+try {
+  if(typeof FIREBASE_CONFIG !== 'undefined' && FIREBASE_CONFIG.apiKey) {
+    if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+    fbAuth = firebase.auth();
+  }
+} catch(e){}
 
 const WIFI={ssid:'GunturGongura_Guest',pw:'Gongura@2026'};
 /* ===== HOTEL DEFAULTS: edit this block to change the home page ===== */
@@ -149,11 +161,27 @@ function login(){
     </div>
   </div></div>`}
 
-function doLogin(){
+async function doLogin(){
   const email=($('#staff_email')?.value||'').trim().toLowerCase();
   const pw=($('#staff_pw')?.value||'').trim();
   if(!email)return toast('Please enter Email Address','#ef4444');
   if(!pw)return toast('Please enter Password','#ef4444');
+
+  if(fbAuth){
+    try {
+      const cred = await fbAuth.signInWithEmailAndPassword(email, pw);
+      if(cred && cred.user){
+        beep(0);
+        me={role:'staff',email:cred.user.email,id:cred.user.email,name:cred.user.email.split('@')[0]};
+        staffTab='orders';
+        toast('Welcome (Firebase), '+cred.user.email+'!');
+        draw();
+        return;
+      }
+    } catch(err){
+      console.warn('Firebase Auth note:', err.message);
+    }
+  }
 
   if(email===STAFF_EMAIL.toLowerCase()&&pw===STAFF_PASSWORD){
     beep(0);
